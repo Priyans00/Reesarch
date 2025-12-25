@@ -1,0 +1,5 @@
+data/embedding/*
+data/processed/*
+data/uploads/*
+
+src/__pycache__/*
