@@ -1,7 +1,5 @@
-"""
-Evaluator: Evaluates retrieval and generation quality.
-Includes metrics for retrieval precision, answer quality, and hallucination detection.
-"""
+# Evaluation module for assessing retrieval and answer generation quality
+
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -12,10 +10,8 @@ from pathlib import Path
 from config import EVAL_METRICS
 from src.chunker import TextChunk
 
-
 @dataclass
 class EvaluationResult:
-    """Result of a single evaluation."""
     question: str
     answer: str
     retrieved_chunks: List[TextChunk]
@@ -23,6 +19,7 @@ class EvaluationResult:
     ground_truth: Optional[str] = None
     relevant_doc_ids: List[str] = field(default_factory=list)
     
+    # Converts object to dictionary representation
     def to_dict(self) -> Dict:
         return {
             "question": self.question,
@@ -33,14 +30,13 @@ class EvaluationResult:
             "relevant_doc_ids": self.relevant_doc_ids
         }
 
-
 @dataclass
 class EvaluationReport:
-    """Aggregated evaluation report."""
     total_queries: int
     results: List[EvaluationResult]
     aggregate_metrics: Dict[str, float] = field(default_factory=dict)
     
+    # Converts object to dictionary representation
     def to_dict(self) -> Dict:
         return {
             "total_queries": self.total_queries,
@@ -48,37 +44,24 @@ class EvaluationReport:
             "results": [r.to_dict() for r in self.results]
         }
     
+    # Saves data to disk
     def save(self, path: str):
-        """Save report to JSON file."""
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)
 
-
 class RetrievalEvaluator:
-    """
-    Evaluates retrieval quality using precision-based metrics.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self):
         self.results = []
     
+    # Precision At K
     def precision_at_k(
         self,
         retrieved_chunks: List[TextChunk],
         relevant_doc_ids: List[str],
         k: int
     ) -> float:
-        """
-        Calculate Precision@K.
-        
-        Args:
-            retrieved_chunks: List of retrieved chunks
-            relevant_doc_ids: List of relevant document IDs
-            k: Number of top results to consider
-            
-        Returns:
-            Precision score
-        """
         if not retrieved_chunks or not relevant_doc_ids:
             return 0.0
         
@@ -90,15 +73,13 @@ class RetrievalEvaluator:
         
         return relevant_count / k
     
+    # Recall At K
     def recall_at_k(
         self,
         retrieved_chunks: List[TextChunk],
         relevant_doc_ids: List[str],
         k: int
     ) -> float:
-        """
-        Calculate Recall@K.
-        """
         if not retrieved_chunks or not relevant_doc_ids:
             return 0.0
         
@@ -108,14 +89,12 @@ class RetrievalEvaluator:
         
         return relevant_retrieved / len(relevant_doc_ids)
     
+    # Mrr
     def mrr(
         self,
         retrieved_chunks: List[TextChunk],
         relevant_doc_ids: List[str]
     ) -> float:
-        """
-        Calculate Mean Reciprocal Rank.
-        """
         if not retrieved_chunks or not relevant_doc_ids:
             return 0.0
         
@@ -125,15 +104,13 @@ class RetrievalEvaluator:
         
         return 0.0
     
+    # F1 At K
     def f1_at_k(
         self,
         retrieved_chunks: List[TextChunk],
         relevant_doc_ids: List[str],
         k: int
     ) -> float:
-        """
-        Calculate F1@K.
-        """
         precision = self.precision_at_k(retrieved_chunks, relevant_doc_ids, k)
         recall = self.recall_at_k(retrieved_chunks, relevant_doc_ids, k)
         
@@ -142,18 +119,13 @@ class RetrievalEvaluator:
         
         return 2 * (precision * recall) / (precision + recall)
     
+    # Evaluates performance using metrics
     def evaluate_retrieval(
         self,
         retrieved_chunks: List[TextChunk],
         relevant_doc_ids: List[str],
         k_values: List[int] = [1, 3, 5, 10]
     ) -> Dict[str, float]:
-        """
-        Evaluate retrieval with multiple metrics.
-        
-        Returns:
-            Dictionary of metric names to values
-        """
         metrics = {}
         
         for k in k_values:
@@ -165,28 +137,21 @@ class RetrievalEvaluator:
         
         return metrics
 
-
 class AnswerEvaluator:
-    """
-    Evaluates answer quality.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self):
         pass
     
+    # Compute Token Overlap
     def compute_token_overlap(
         self,
         answer: str,
         context: str
     ) -> float:
-        """
-        Compute token overlap between answer and context.
-        Higher overlap suggests answer is grounded in context.
-        """
         answer_tokens = set(answer.lower().split())
         context_tokens = set(context.lower().split())
         
-        # Remove common stopwords
         stopwords = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
                     'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
                     'would', 'could', 'should', 'may', 'might', 'must', 'shall',
@@ -208,10 +173,8 @@ class AnswerEvaluator:
         overlap = len(answer_tokens.intersection(context_tokens))
         return overlap / len(answer_tokens)
     
+    # Check Hallucination Indicators
     def check_hallucination_indicators(self, answer: str) -> Dict[str, bool]:
-        """
-        Check for common hallucination indicators.
-        """
         indicators = {
             "makes_specific_claims": False,
             "uses_hedging": False,
@@ -221,47 +184,37 @@ class AnswerEvaluator:
         
         answer_lower = answer.lower()
         
-        # Check for specific claim patterns
         specific_patterns = ['exactly', 'precisely', 'specifically', '%', 'percent']
         indicators["makes_specific_claims"] = any(p in answer_lower for p in specific_patterns)
         
-        # Check for hedging language
         hedging_patterns = ['might', 'could', 'possibly', 'perhaps', 'seems', 'appears']
         indicators["uses_hedging"] = any(p in answer_lower for p in hedging_patterns)
         
-        # Check for uncertainty mentions
         uncertainty_patterns = ['unclear', 'uncertain', 'not sure', 'difficult to say']
         indicators["mentions_uncertainty"] = any(p in answer_lower for p in uncertainty_patterns)
         
-        # Check for context references
         context_patterns = ['according to', 'the context', 'the paper', 'source', 'states that']
         indicators["references_context"] = any(p in answer_lower for p in context_patterns)
         
         return indicators
     
+    # Evaluates performance using metrics
     def evaluate_answer(
         self,
         answer: str,
         context: str,
         question: str
     ) -> Dict[str, float]:
-        """
-        Evaluate answer quality.
-        """
         metrics = {}
         
-        # Token overlap with context
         metrics["context_overlap"] = self.compute_token_overlap(answer, context)
         
-        # Answer length (normalized)
         metrics["answer_length"] = min(len(answer.split()) / 100, 1.0)
         
-        # Hallucination indicators
         indicators = self.check_hallucination_indicators(answer)
         metrics["references_context"] = 1.0 if indicators["references_context"] else 0.0
         metrics["uses_hedging"] = 1.0 if indicators["uses_hedging"] else 0.0
         
-        # Composite groundedness score
         metrics["groundedness"] = (
             metrics["context_overlap"] * 0.6 +
             metrics["references_context"] * 0.3 +
@@ -270,17 +223,15 @@ class AnswerEvaluator:
         
         return metrics
 
-
 class RAGEvaluator:
-    """
-    Complete evaluation pipeline for RAG system.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self):
         self.retrieval_evaluator = RetrievalEvaluator()
         self.answer_evaluator = AnswerEvaluator()
         self.results: List[EvaluationResult] = []
     
+    # Evaluates performance using metrics
     def evaluate_single(
         self,
         question: str,
@@ -290,19 +241,14 @@ class RAGEvaluator:
         relevant_doc_ids: Optional[List[str]] = None,
         ground_truth: Optional[str] = None
     ) -> EvaluationResult:
-        """
-        Evaluate a single query-answer pair.
-        """
         metrics = {}
         
-        # Retrieval metrics (if relevant docs are known)
         if relevant_doc_ids:
             retrieval_metrics = self.retrieval_evaluator.evaluate_retrieval(
                 retrieved_chunks, relevant_doc_ids
             )
             metrics.update(retrieval_metrics)
         
-        # Answer quality metrics
         answer_metrics = self.answer_evaluator.evaluate_answer(answer, context, question)
         metrics.update(answer_metrics)
         
@@ -318,17 +264,11 @@ class RAGEvaluator:
         self.results.append(result)
         return result
     
+    # Evaluates performance using metrics
     def evaluate_batch(
         self,
         qa_pairs: List[Dict]
     ) -> EvaluationReport:
-        """
-        Evaluate a batch of QA pairs.
-        
-        Args:
-            qa_pairs: List of dicts with keys: question, answer, context, 
-                     retrieved_chunks, relevant_doc_ids (optional), ground_truth (optional)
-        """
         for pair in qa_pairs:
             self.evaluate_single(
                 question=pair["question"],
@@ -341,14 +281,11 @@ class RAGEvaluator:
         
         return self.generate_report()
     
+    # Generates output based on input
     def generate_report(self) -> EvaluationReport:
-        """
-        Generate aggregated evaluation report.
-        """
         if not self.results:
             return EvaluationReport(total_queries=0, results=[], aggregate_metrics={})
         
-        # Aggregate metrics
         all_metrics = defaultdict(list)
         for result in self.results:
             for metric_name, value in result.metrics.items():
@@ -364,12 +301,12 @@ class RAGEvaluator:
             aggregate_metrics=aggregate_metrics
         )
     
+    # Reset
     def reset(self):
-        """Reset evaluation results."""
         self.results = []
     
+    # Print Summary
     def print_summary(self, report: EvaluationReport):
-        """Print a summary of the evaluation report."""
         print("\n" + "="*60)
         print("EVALUATION SUMMARY")
         print("="*60)
@@ -381,22 +318,17 @@ class RAGEvaluator:
         
         print("="*60)
 
-
 class FailureCaseAnalyzer:
-    """
-    Analyzes failure cases in the RAG pipeline.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self, evaluator: RAGEvaluator):
         self.evaluator = evaluator
     
+    # Identify Failures
     def identify_failures(
         self,
         threshold: float = 0.3
     ) -> Dict[str, List[EvaluationResult]]:
-        """
-        Identify different types of failures.
-        """
         failures = {
             "retrieval_failure": [],
             "low_groundedness": [],
@@ -405,27 +337,22 @@ class FailureCaseAnalyzer:
         }
         
         for result in self.evaluator.results:
-            # Retrieval failure (if relevant docs known)
             if result.relevant_doc_ids:
                 mrr = result.metrics.get("mrr", 0)
                 if mrr < threshold:
                     failures["retrieval_failure"].append(result)
             
-            # Low groundedness
             groundedness = result.metrics.get("groundedness", 0)
             if groundedness < threshold:
                 failures["low_groundedness"].append(result)
             
-            # Very short answers
             if len(result.answer.split()) < 10:
                 failures["short_answer"].append(result)
         
         return failures
     
+    # Analyze Patterns
     def analyze_patterns(self, failures: Dict[str, List[EvaluationResult]]) -> Dict:
-        """
-        Analyze patterns in failure cases.
-        """
         analysis = {}
         
         for failure_type, cases in failures.items():
@@ -440,10 +367,8 @@ class FailureCaseAnalyzer:
         
         return analysis
     
+    # Generates output based on input
     def generate_failure_report(self) -> Dict:
-        """
-        Generate a comprehensive failure analysis report.
-        """
         failures = self.identify_failures()
         patterns = self.analyze_patterns(failures)
         
@@ -453,8 +378,8 @@ class FailureCaseAnalyzer:
             "recommendations": self._generate_recommendations(patterns)
         }
     
+    # Generates output based on input
     def _generate_recommendations(self, patterns: Dict) -> List[str]:
-        """Generate recommendations based on failure patterns."""
         recommendations = []
         
         if "retrieval_failure" in patterns and patterns["retrieval_failure"]["percentage"] > 20:
@@ -483,12 +408,9 @@ class FailureCaseAnalyzer:
         
         return recommendations
 
-
 if __name__ == "__main__":
-    # Test the evaluator
     evaluator = RAGEvaluator()
     
-    # Create sample evaluation
     test_chunks = [
         TextChunk(chunk_id="c1", doc_id="doc1", text="Test chunk 1"),
         TextChunk(chunk_id="c2", doc_id="doc2", text="Test chunk 2"),

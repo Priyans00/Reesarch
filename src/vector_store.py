@@ -1,7 +1,5 @@
-"""
-Vector Store: Efficient storage and retrieval of document embeddings.
-Uses FAISS for fast similarity search.
-"""
+# Vector storage module using FAISS for efficient similarity search
+
 import os
 import json
 from pathlib import Path
@@ -18,64 +16,39 @@ from config import (
 )
 from src.chunker import TextChunk
 
-
 class VectorStore:
-    """
-    Vector store for document embeddings using FAISS.
     
-    Supports:
-    - Adding embeddings with metadata
-    - Fast similarity search
-    - Persistence to disk
-    """
-    
+    # Initializes the class with configuration parameters
     def __init__(
         self,
         embedding_dim: int = EMBEDDING_DIMENSION,
         index_path: Optional[str] = None,
         metadata_path: Optional[str] = None
     ):
-        """
-        Initialize the vector store.
-        
-        Args:
-            embedding_dim: Dimension of embeddings
-            index_path: Path to save/load the FAISS index
-            metadata_path: Path to save/load metadata
-        """
         self.embedding_dim = embedding_dim
         self.index_path = Path(index_path) if index_path else VECTOR_STORE_PATH
         self.metadata_path = Path(metadata_path) if metadata_path else METADATA_PATH
         
-        # Initialize FAISS index (using inner product for cosine similarity with normalized vectors)
         self.index = faiss.IndexFlatIP(embedding_dim)
         
-        # Metadata storage
         self.chunk_ids: List[str] = []
         self.chunks: Dict[str, TextChunk] = {}
         self.doc_ids: set = set()
         
     @property
+    # Size
     def size(self) -> int:
-        """Return the number of vectors in the store."""
         return self.index.ntotal
     
+    # Adds new items to the collection
     def add_embeddings(
         self,
         chunks: List[TextChunk],
         embeddings: Dict[str, np.ndarray]
     ):
-        """
-        Add embeddings to the vector store.
-        
-        Args:
-            chunks: List of TextChunk objects
-            embeddings: Dictionary mapping chunk_id to embedding
-        """
         if not chunks:
             return
         
-        # Prepare vectors for FAISS
         vectors = []
         for chunk in chunks:
             if chunk.chunk_id in embeddings:
@@ -89,39 +62,25 @@ class VectorStore:
             self.index.add(vectors)
             print(f"Added {len(vectors)} vectors to store. Total: {self.size}")
     
+    # Searches for relevant items
     def search(
         self,
         query_embedding: np.ndarray,
         top_k: int = 10,
         filter_doc_ids: Optional[List[str]] = None
     ) -> List[Tuple[TextChunk, float]]:
-        """
-        Search for similar chunks.
-        
-        Args:
-            query_embedding: Query vector
-            top_k: Number of results to return
-            filter_doc_ids: Optional list of doc_ids to filter results
-            
-        Returns:
-            List of (TextChunk, score) tuples
-        """
         if self.size == 0:
             return []
         
-        # Ensure query is 2D
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
         
         query_embedding = query_embedding.astype(np.float32)
         
-        # Search more than needed if filtering
         search_k = min(top_k * 3 if filter_doc_ids else top_k, self.size)
         
-        # Perform search
         scores, indices = self.index.search(query_embedding, search_k)
         
-        # Collect results
         results = []
         for idx, score in zip(indices[0], scores[0]):
             if idx < 0 or idx >= len(self.chunk_ids):
@@ -133,7 +92,6 @@ class VectorStore:
             if chunk is None:
                 continue
             
-            # Apply filter if specified
             if filter_doc_ids and chunk.doc_id not in filter_doc_ids:
                 continue
             
@@ -144,6 +102,7 @@ class VectorStore:
         
         return results
     
+    # Searches for relevant items
     def search_by_text(
         self,
         query: str,
@@ -151,39 +110,22 @@ class VectorStore:
         top_k: int = 10,
         filter_doc_ids: Optional[List[str]] = None
     ) -> List[Tuple[TextChunk, float]]:
-        """
-        Search using text query (embedding is computed).
-        
-        Args:
-            query: Text query
-            embedder: Embedder instance for creating query embedding
-            top_k: Number of results
-            filter_doc_ids: Optional document filter
-            
-        Returns:
-            List of (TextChunk, score) tuples
-        """
         query_embedding = embedder.embed_query(query)
         return self.search(query_embedding, top_k, filter_doc_ids)
     
+    # Retrieves items from the collection
     def get_chunks_by_doc(self, doc_id: str) -> List[TextChunk]:
-        """Get all chunks for a specific document."""
         return [
             chunk for chunk in self.chunks.values()
             if chunk.doc_id == doc_id
         ]
     
+    # Retrieves items from the collection
     def get_all_doc_ids(self) -> List[str]:
-        """Get list of all document IDs in the store."""
         return list(self.doc_ids)
     
+    # Removes items from the collection
     def remove_document(self, doc_id: str):
-        """
-        Remove all chunks for a document.
-        
-        Note: FAISS doesn't support deletion, so we rebuild the index.
-        """
-        # Filter out chunks from the document
         chunks_to_keep = [
             (cid, self.chunks[cid])
             for cid in self.chunk_ids
@@ -191,27 +133,21 @@ class VectorStore:
         ]
         
         if len(chunks_to_keep) == len(self.chunk_ids):
-            return  # Document not found
+            return
         
-        # Rebuild index
         self._rebuild_index(chunks_to_keep)
         self.doc_ids.discard(doc_id)
     
+    #  Rebuild Index
     def _rebuild_index(self, chunks_with_ids: List[Tuple[str, TextChunk]]):
-        """Rebuild the FAISS index with filtered chunks."""
-        # This requires re-embedding, so we store embeddings separately
-        # For now, this is a limitation
         print("Warning: Rebuilding index requires re-embedding")
     
+    # Saves data to disk
     def save(self):
-        """Save the vector store to disk."""
-        # Ensure directory exists
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Save FAISS index
         faiss.write_index(self.index, str(self.index_path))
         
-        # Save metadata
         metadata = {
             "chunk_ids": self.chunk_ids,
             "chunks": {cid: chunk.to_dict() for cid, chunk in self.chunks.items()},
@@ -226,22 +162,15 @@ class VectorStore:
         print(f"  Index: {self.index_path}")
         print(f"  Metadata: {self.metadata_path}")
     
+    # Loads data from disk
     def load(self) -> bool:
-        """
-        Load the vector store from disk.
-        
-        Returns:
-            True if loaded successfully, False otherwise
-        """
         if not self.index_path.exists() or not self.metadata_path.exists():
             print("No saved vector store found")
             return False
         
         try:
-            # Load FAISS index
             self.index = faiss.read_index(str(self.index_path))
             
-            # Load metadata
             with open(self.metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
             
@@ -260,16 +189,16 @@ class VectorStore:
             print(f"Error loading vector store: {e}")
             return False
     
+    # Clears all stored data
     def clear(self):
-        """Clear all data from the vector store."""
         self.index = faiss.IndexFlatIP(self.embedding_dim)
         self.chunk_ids = []
         self.chunks = {}
         self.doc_ids = set()
         print("Vector store cleared")
     
+    # Retrieves items from the collection
     def get_statistics(self) -> Dict:
-        """Get statistics about the vector store."""
         return {
             "total_vectors": self.size,
             "total_documents": len(self.doc_ids),
@@ -278,13 +207,9 @@ class VectorStore:
             "index_type": "FlatIP (Inner Product)"
         }
 
-
 class HybridVectorStore(VectorStore):
-    """
-    Vector store with IVF indexing for larger collections.
-    Uses clustering for faster approximate search.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(
         self,
         embedding_dim: int = EMBEDDING_DIMENSION,
@@ -292,14 +217,6 @@ class HybridVectorStore(VectorStore):
         n_probe: int = 10,
         **kwargs
     ):
-        """
-        Initialize hybrid store with IVF index.
-        
-        Args:
-            embedding_dim: Dimension of embeddings
-            n_clusters: Number of clusters for IVF
-            n_probe: Number of clusters to search
-        """
         super().__init__(embedding_dim, **kwargs)
         
         self.n_clusters = n_clusters
@@ -307,19 +224,16 @@ class HybridVectorStore(VectorStore):
         self._is_trained = False
         self._training_vectors = []
     
+    #  Create Ivf Index
     def _create_ivf_index(self, vectors: np.ndarray):
-        """Create and train IVF index."""
         n_vectors = len(vectors)
         
-        # Adjust clusters based on data size
         n_clusters = min(self.n_clusters, n_vectors // 10)
         n_clusters = max(n_clusters, 1)
         
         if n_vectors < 1000:
-            # Use flat index for small collections
             self.index = faiss.IndexFlatIP(self.embedding_dim)
         else:
-            # Create IVF index
             quantizer = faiss.IndexFlatIP(self.embedding_dim)
             self.index = faiss.IndexIVFFlat(
                 quantizer, 
@@ -328,22 +242,20 @@ class HybridVectorStore(VectorStore):
                 faiss.METRIC_INNER_PRODUCT
             )
             
-            # Train the index
             self.index.train(vectors.astype(np.float32))
             self.index.nprobe = self.n_probe
         
         self._is_trained = True
     
+    # Adds new items to the collection
     def add_embeddings(
         self,
         chunks: List[TextChunk],
         embeddings: Dict[str, np.ndarray]
     ):
-        """Add embeddings, training index if needed."""
         if not chunks:
             return
         
-        # Collect vectors
         vectors = []
         new_chunk_ids = []
         
@@ -359,22 +271,17 @@ class HybridVectorStore(VectorStore):
         
         vectors = np.array(vectors, dtype=np.float32)
         
-        # Train index if not already trained
         if not self._is_trained:
             self._create_ivf_index(vectors)
         
-        # Add vectors
         self.index.add(vectors)
         self.chunk_ids.extend(new_chunk_ids)
         
         print(f"Added {len(vectors)} vectors. Total: {self.size}")
 
-
 if __name__ == "__main__":
-    # Test the vector store
     store = VectorStore()
     
-    # Create test chunks
     test_chunks = [
         TextChunk(
             chunk_id="test_1",
@@ -396,21 +303,17 @@ if __name__ == "__main__":
         ),
     ]
     
-    # Create fake embeddings
     embeddings = {
         "test_1": np.random.randn(768).astype(np.float32),
         "test_2": np.random.randn(768).astype(np.float32),
         "test_3": np.random.randn(768).astype(np.float32),
     }
     
-    # Normalize embeddings
     for k, v in embeddings.items():
         embeddings[k] = v / np.linalg.norm(v)
     
-    # Add to store
     store.add_embeddings(test_chunks, embeddings)
     
-    # Test search
     query_emb = np.random.randn(768).astype(np.float32)
     query_emb = query_emb / np.linalg.norm(query_emb)
     
@@ -419,10 +322,8 @@ if __name__ == "__main__":
     for chunk, score in results:
         print(f"  {score:.4f}: {chunk.text}")
     
-    # Test statistics
     print(f"\nStatistics: {store.get_statistics()}")
     
-    # Test save/load
     store.save()
     
     new_store = VectorStore()

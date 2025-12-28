@@ -1,16 +1,4 @@
-"""
-Research Paper Question Answering - Source Package
-
-This package contains all components for the RAG pipeline:
-- pdf_processor: PDF text extraction
-- chunker: Text chunking
-- embedder: SPECTER embeddings
-- vector_store: FAISS vector storage
-- retriever: Two-stage retrieval
-- generator: Qwen answer generation
-- evaluator: Evaluation metrics
-- pipeline: Main orchestration
-"""
+# Research Paper Question Answering - Source Package initialization
 
 from src.pipeline import RAGPipeline, create_pipeline
 from src.pdf_processor import PDFProcessor

@@ -1,7 +1,5 @@
-"""
-Generator: Generates answers using Qwen2.5-0.5B-Instruct.
-Constrained to only use provided context to reduce hallucinations.
-"""
+# Answer generation module using Qwen language model
+
 from typing import List, Dict, Optional, Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -17,17 +15,9 @@ from config import (
 )
 from src.chunker import TextChunk
 
-
 class Generator:
-    """
-    Answer generator using Qwen2.5-0.5B-Instruct.
     
-    Features:
-    - Constrained generation from provided context only
-    - Abstention when information is not available
-    - Source attribution in answers
-    """
-    
+    # Initializes the class with configuration parameters
     def __init__(
         self,
         model_name: str = GENERATOR_MODEL,
@@ -36,16 +26,6 @@ class Generator:
         top_p: float = GENERATOR_TOP_P,
         device: str = DEVICE
     ):
-        """
-        Initialize the generator.
-        
-        Args:
-            model_name: HuggingFace model name
-            max_new_tokens: Maximum tokens to generate
-            temperature: Sampling temperature (lower = more focused)
-            top_p: Nucleus sampling parameter
-            device: Device to run on
-        """
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
@@ -55,14 +35,13 @@ class Generator:
         self.model = None
         self.tokenizer = None
     
+    # Loads the pre-trained model into memory
     def load_model(self):
-        """Load the language model and tokenizer."""
         if self.model is None:
             print(f"Loading generator model: {self.model_name}")
             
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             
-            # Load model with appropriate settings for device
             if self.device == "cuda":
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
@@ -78,48 +57,33 @@ class Generator:
             print(f"  ✓ Model loaded on {self.device}")
             print(f"  ✓ Model size: {sum(p.numel() for p in self.model.parameters()) / 1e6:.1f}M parameters")
     
+    # Generates output based on input
     def generate_answer(
         self,
         question: str,
         context: str,
         system_prompt: str = SYSTEM_PROMPT
     ) -> str:
-        """
-        Generate an answer based on the provided context.
-        
-        Args:
-            question: User question
-            context: Retrieved context from documents
-            system_prompt: System prompt for the model
-            
-        Returns:
-            Generated answer string
-        """
         self.load_model()
         
-        # Format the prompt
         user_message = QA_PROMPT_TEMPLATE.format(
             context=context,
             question=question
         )
         
-        # Create chat messages
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
         
-        # Apply chat template
         text = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True
         )
         
-        # Tokenize
         model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
         
-        # Generate
         with torch.no_grad():
             generated_ids = self.model.generate(
                 **model_inputs,
@@ -130,7 +94,6 @@ class Generator:
                 pad_token_id=self.tokenizer.eos_token_id
             )
         
-        # Decode only the new tokens
         generated_ids = [
             output_ids[len(input_ids):]
             for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
@@ -140,26 +103,15 @@ class Generator:
         
         return response.strip()
     
+    # Generates output based on input
     def generate_with_sources(
         self,
         question: str,
         context: str,
         source_chunks: List[TextChunk]
     ) -> Dict:
-        """
-        Generate answer with source attribution.
-        
-        Args:
-            question: User question
-            context: Formatted context string
-            source_chunks: List of source TextChunk objects
-            
-        Returns:
-            Dictionary with answer and sources
-        """
         answer = self.generate_answer(question, context)
         
-        # Format sources
         sources = []
         for i, chunk in enumerate(source_chunks, 1):
             source_info = {
@@ -177,16 +129,8 @@ class Generator:
             "num_sources": len(sources)
         }
     
+    # Checks if model abstained from answering the question
     def check_abstention(self, answer: str) -> bool:
-        """
-        Check if the model abstained from answering.
-        
-        Args:
-            answer: Generated answer
-            
-        Returns:
-            True if the model abstained
-        """
         abstention_phrases = [
             "cannot answer",
             "not enough information",
@@ -203,29 +147,20 @@ class Generator:
         answer_lower = answer.lower()
         return any(phrase in answer_lower for phrase in abstention_phrases)
 
-
 class StreamingGenerator(Generator):
-    """
-    Generator with streaming output support.
-    """
     
+    # Generates output based on input
     def generate_stream(
         self,
         question: str,
         context: str,
         system_prompt: str = SYSTEM_PROMPT
     ):
-        """
-        Generate answer with streaming output.
-        
-        Yields tokens as they are generated.
-        """
         self.load_model()
         
         from transformers import TextIteratorStreamer
         from threading import Thread
         
-        # Format prompt
         user_message = QA_PROMPT_TEMPLATE.format(
             context=context,
             question=question
@@ -244,14 +179,12 @@ class StreamingGenerator(Generator):
         
         model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
         
-        # Set up streamer
         streamer = TextIteratorStreamer(
             self.tokenizer,
             skip_prompt=True,
             skip_special_tokens=True
         )
         
-        # Generation in separate thread
         generation_kwargs = {
             **model_inputs,
             "max_new_tokens": self.max_new_tokens,
@@ -265,30 +198,24 @@ class StreamingGenerator(Generator):
         thread = Thread(target=self.model.generate, kwargs=generation_kwargs)
         thread.start()
         
-        # Yield tokens
         for text in streamer:
             yield text
         
         thread.join()
 
-
 class AnswerRefiner:
-    """
-    Post-processes and refines generated answers.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self, generator: Generator):
         self.generator = generator
     
+    # Refines and improves initial answer for clarity and accuracy
     def refine_answer(
         self,
         question: str,
         initial_answer: str,
         context: str
     ) -> str:
-        """
-        Refine an initial answer for better quality.
-        """
         refine_prompt = f"""Original question: {question}
 
 Initial answer: {initial_answer}
@@ -310,14 +237,12 @@ Refined answer:"""
         
         return refined
     
+    # Verifies if answer is supported by provided context
     def verify_answer(
         self,
         answer: str,
         context: str
     ) -> Dict:
-        """
-        Verify that an answer is supported by the context.
-        """
         verify_prompt = f"""Answer: {answer}
 
 Context: {context}
@@ -336,7 +261,6 @@ Your analysis:"""
             system_prompt="You are a fact-checker verifying answers against source material."
         )
         
-        # Parse verification
         verification_lower = verification.lower()
         if "not_supported" in verification_lower or "not supported" in verification_lower:
             status = "NOT_SUPPORTED"
@@ -350,32 +274,5 @@ Your analysis:"""
             "explanation": verification
         }
 
-
 if __name__ == "__main__":
-    # Test the generator
     generator = Generator()
-    
-    test_context = """
-    [Source 1] [METHODS]
-    We used a transformer-based model with 500 million parameters. The model was
-    trained on a dataset of 10,000 research papers from various scientific domains.
-    Training was performed on 4 A100 GPUs for 3 days.
-    
-    [Source 2] [RESULTS]
-    Our model achieved 85% accuracy on the question answering benchmark, which is
-    a 10% improvement over the previous state-of-the-art. The model showed
-    particularly strong performance on technical questions.
-    """
-    
-    test_question = "What accuracy did the model achieve?"
-    
-    print("Testing generator...")
-    result = generator.generate_with_sources(
-        question=test_question,
-        context=test_context,
-        source_chunks=[]
-    )
-    
-    print(f"\nQuestion: {test_question}")
-    print(f"Answer: {result['answer']}")
-    print(f"Abstained: {generator.check_abstention(result['answer'])}")

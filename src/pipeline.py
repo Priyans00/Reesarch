@@ -1,7 +1,5 @@
-"""
-RAG Pipeline: Main orchestration for the Research Paper QA system.
-Combines all components into a unified pipeline.
-"""
+# Main RAG pipeline orchestrating all components for question answering
+
 import os
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
@@ -21,10 +19,8 @@ from src.retriever import Retriever
 from src.generator import Generator
 from src.evaluator import RAGEvaluator, EvaluationResult
 
-
 @dataclass
 class QueryResult:
-    """Result of a query to the RAG system."""
     question: str
     answer: str
     sources: List[Dict]
@@ -32,6 +28,7 @@ class QueryResult:
     confidence: float
     abstained: bool
     
+    # Converts object to dictionary representation
     def to_dict(self) -> Dict:
         return {
             "question": self.question,
@@ -41,93 +38,55 @@ class QueryResult:
             "abstained": self.abstained
         }
 
-
 class RAGPipeline:
-    """
-    Main RAG Pipeline for Research Paper Question Answering.
     
-    Pipeline stages:
-    1. Document ingestion (PDF processing)
-    2. Text chunking
-    3. Embedding generation
-    4. Indexing in vector store
-    5. Retrieval and reranking
-    6. Answer generation
-    """
-    
+    # Initializes the class with configuration parameters
     def __init__(
         self,
         auto_load: bool = True,
         device: str = DEVICE
     ):
-        """
-        Initialize the RAG pipeline.
-        
-        Args:
-            auto_load: Whether to automatically load existing index
-            device: Device to use for models
-        """
         self.device = device
         
-        # Initialize components
         print("Initializing RAG Pipeline...")
         
-        # PDF Processor
         self.pdf_processor = PDFProcessor()
         
-        # Chunker
         self.chunker = SemanticChunker()
         
-        # Embedder (uses allenai-specter)
         self.embedder = Embedder(device=device)
         
-        # Vector Store
         self.vector_store = VectorStore()
         
-        # Retriever (with MS-MARCO reranking)
         self.retriever = Retriever(
             embedder=self.embedder,
             vector_store=self.vector_store,
             device=device
         )
         
-        # Generator (uses Qwen2.5-0.5B)
         self.generator = Generator(device=device)
         
-        # Evaluator
         self.evaluator = RAGEvaluator()
         
-        # Document metadata storage
         self.documents: Dict[str, ProcessedDocument] = {}
         
-        # Try to load existing index
         if auto_load:
             self._try_load_index()
         
         print("✓ Pipeline initialized")
     
+    # Loads data from disk
     def _try_load_index(self):
-        """Try to load existing vector store index."""
         if self.vector_store.load():
             print(f"  ✓ Loaded existing index with {self.vector_store.size} vectors")
         else:
             print("  ℹ No existing index found")
     
-    # =========== Document Ingestion ===========
     
+    # Ingest Pdf
     def ingest_pdf(self, pdf_path: str) -> ProcessedDocument:
-        """
-        Ingest a single PDF document.
-        
-        Args:
-            pdf_path: Path to the PDF file
-            
-        Returns:
-            ProcessedDocument object
-        """
         print(f"\nIngesting: {pdf_path}")
         
-        # Process PDF
         doc = self.pdf_processor.process_pdf(pdf_path)
         self.documents[doc.metadata.doc_id] = doc
         
@@ -136,16 +95,8 @@ class RAGPipeline:
         
         return doc
     
+    # Ingest Directory
     def ingest_directory(self, directory: str = None) -> List[ProcessedDocument]:
-        """
-        Ingest all PDFs from a directory.
-        
-        Args:
-            directory: Directory path (defaults to UPLOADS_DIR)
-            
-        Returns:
-            List of ProcessedDocument objects
-        """
         if directory is None:
             directory = str(UPLOADS_DIR)
         
@@ -156,20 +107,13 @@ class RAGPipeline:
         
         return documents
     
-    # =========== Indexing ===========
     
+    # Index Documents
     def index_documents(
         self, 
         documents: List[ProcessedDocument] = None,
         batch_size: int = 32
     ):
-        """
-        Index documents into the vector store.
-        
-        Args:
-            documents: Documents to index (uses all stored if None)
-            batch_size: Batch size for embedding
-        """
         if documents is None:
             documents = list(self.documents.values())
         
@@ -179,7 +123,6 @@ class RAGPipeline:
         
         print(f"\nIndexing {len(documents)} documents...")
         
-        # Chunk documents
         print("  Chunking documents...")
         all_chunks = self.chunker.chunk_documents(documents)
         
@@ -187,31 +130,23 @@ class RAGPipeline:
             print("  No chunks created")
             return
         
-        # Generate embeddings
         print("  Generating embeddings...")
         embeddings = self.embedder.embed_chunks(all_chunks, batch_size=batch_size)
         
-        # Add to vector store
         print("  Adding to vector store...")
         self.vector_store.add_embeddings(all_chunks, embeddings)
         
-        # Save index
         self.vector_store.save()
         
         print(f"  ✓ Indexed {len(all_chunks)} chunks from {len(documents)} documents")
     
+    # Adds new items to the collection
     def add_document(self, pdf_path: str):
-        """
-        Convenience method to ingest and index a single document.
-        
-        Args:
-            pdf_path: Path to the PDF file
-        """
         doc = self.ingest_pdf(pdf_path)
         self.index_documents([doc])
     
-    # =========== Query ===========
     
+    # Query
     def query(
         self,
         question: str,
@@ -220,19 +155,6 @@ class RAGPipeline:
         filter_doc_ids: Optional[List[str]] = None,
         use_reranking: bool = True
     ) -> QueryResult:
-        """
-        Query the RAG system with a question.
-        
-        Args:
-            question: User question
-            top_k: Number of chunks to retrieve
-            max_context_length: Maximum context length
-            filter_doc_ids: Optional document filter
-            use_reranking: Whether to use reranking
-            
-        Returns:
-            QueryResult object with answer and sources
-        """
         print(f"[DEBUG] Query called. Vector store size: {self.vector_store.size}")
         print(f"[DEBUG] Documents in store: {self.vector_store.doc_ids}")
         
@@ -246,7 +168,6 @@ class RAGPipeline:
                 abstained=True
             )
         
-        # Retrieve relevant chunks
         context, source_chunks = self.retriever.get_context_for_generation(
             query=question,
             top_k=top_k,
@@ -266,21 +187,18 @@ class RAGPipeline:
                 abstained=True
             )
         
-        # Generate answer
         result = self.generator.generate_with_sources(
             question=question,
             context=context,
             source_chunks=source_chunks
         )
         
-        # Check if model abstained
         abstained = self.generator.check_abstention(result["answer"])
         
-        # Calculate confidence based on retrieval scores
         retrieval_results = self.retriever.retrieve(question, top_k=top_k)
         if retrieval_results:
             avg_score = sum(score for _, score in retrieval_results) / len(retrieval_results)
-            confidence = min(avg_score, 1.0)
+            confidence = max(0.0, min(avg_score, 1.0))
         else:
             confidence = 0.0
         
@@ -293,21 +211,12 @@ class RAGPipeline:
             abstained=abstained
         )
     
+    # Batch Query
     def batch_query(
         self,
         questions: List[str],
         **kwargs
     ) -> List[QueryResult]:
-        """
-        Process multiple questions.
-        
-        Args:
-            questions: List of questions
-            **kwargs: Additional arguments for query()
-            
-        Returns:
-            List of QueryResult objects
-        """
         results = []
         for i, question in enumerate(questions, 1):
             print(f"\nProcessing question {i}/{len(questions)}: {question[:50]}...")
@@ -316,31 +225,19 @@ class RAGPipeline:
         
         return results
     
-    # =========== Evaluation ===========
     
+    # Evaluates performance using metrics
     def evaluate(
         self,
         test_queries: List[Dict],
         run_evaluation: bool = True
     ) -> Dict:
-        """
-        Evaluate the pipeline on test queries.
-        
-        Args:
-            test_queries: List of dicts with 'question' and optionally 
-                         'ground_truth', 'relevant_doc_ids'
-            run_evaluation: Whether to run full evaluation
-            
-        Returns:
-            Evaluation report dictionary
-        """
         self.evaluator.reset()
         
         for test in test_queries:
             question = test["question"]
             result = self.query(question)
             
-            # Get retrieved chunks for evaluation
             retrieval_results = self.retriever.retrieve(question)
             retrieved_chunks = [chunk for chunk, _ in retrieval_results]
             
@@ -358,10 +255,9 @@ class RAGPipeline:
         
         return report.to_dict()
     
-    # =========== Utilities ===========
     
+    # Retrieves items from the collection
     def get_statistics(self) -> Dict:
-        """Get statistics about the indexed documents."""
         return {
             "total_documents": len(self.documents),
             "total_chunks": self.vector_store.size,
@@ -369,8 +265,8 @@ class RAGPipeline:
             "vector_store": self.vector_store.get_statistics()
         }
     
+    # List Documents
     def list_documents(self) -> List[Dict]:
-        """List all indexed documents."""
         return [
             {
                 "doc_id": doc.metadata.doc_id,
@@ -381,72 +277,57 @@ class RAGPipeline:
             for doc in self.documents.values()
         ]
     
+    # Clears all stored data
     def clear_index(self):
-        """Clear the vector store and document storage."""
         self.vector_store.clear()
         self.documents.clear()
         print("Index and documents cleared")
     
+    # Loads the pre-trained model into memory
     def reload_models(self):
-        """Force reload all models."""
         self.embedder.model = None
         self.retriever.cross_encoder = None
         self.generator.model = None
         print("Models will be reloaded on next use")
 
-
 class PipelineBuilder:
-    """
-    Builder pattern for configuring the RAG pipeline.
-    """
     
+    # Initializes the class with configuration parameters
     def __init__(self):
         self._config = {
             "auto_load": True,
             "device": DEVICE
         }
     
+    # With Device
     def with_device(self, device: str):
         self._config["device"] = device
         return self
     
+    # Loads data from disk
     def without_auto_load(self):
         self._config["auto_load"] = False
         return self
     
+    # Build
     def build(self) -> RAGPipeline:
         return RAGPipeline(**self._config)
 
-
-# Convenience function for quick setup
+# Create Pipeline
 def create_pipeline(auto_load: bool = True) -> RAGPipeline:
-    """
-    Create a RAG pipeline with default settings.
-    
-    Args:
-        auto_load: Whether to load existing index
-        
-    Returns:
-        Configured RAGPipeline instance
-    """
     return RAGPipeline(auto_load=auto_load)
 
-
 if __name__ == "__main__":
-    # Example usage
     print("Research Paper QA Pipeline")
     print("=" * 50)
     
-    # Create pipeline
     pipeline = create_pipeline()
     
-    # Show statistics
     stats = pipeline.get_statistics()
     print(f"\nPipeline Statistics:")
     print(f"  Documents: {stats['total_documents']}")
     print(f"  Chunks: {stats['total_chunks']}")
     
-    # Example query (if documents are indexed)
     if stats['total_chunks'] > 0:
         print("\nExample Query:")
         result = pipeline.query("What is the main contribution of this paper?")
