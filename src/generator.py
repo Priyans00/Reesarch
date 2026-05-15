@@ -1,8 +1,10 @@
 # Answer generation module using Qwen language model
 
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import json
+import re
 
 from config import (
     GENERATOR_MODEL,
@@ -102,6 +104,36 @@ class Generator:
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         
         return response.strip()
+
+    # Parse model output that is expected to be a JSON object (or contain one).
+    def parse_model_output(self, response: str) -> Dict[str, Any]:
+        # Try direct JSON parse first
+        text = response.strip()
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        # Attempt to extract the first JSON object from the response
+        obj_text = None
+        # Find the first '{' and the matching '}' by searching from the end
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            obj_text = text[start:end+1]
+
+        if obj_text:
+            # Normalize common issues: single quotes -> double quotes for JSON
+            candidate = obj_text
+            candidate = candidate.replace("\"\'", '"')
+            candidate = re.sub(r"\'([^"]*?)\'", r'"\1"', candidate)
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+        # Fallback: return the raw string as the 'answer' field
+        return {"answer": text, "sources": [], "abstain": False, "abstain_reason": None}
     
     # Generates output based on input
     def generate_with_sources(
@@ -110,24 +142,41 @@ class Generator:
         context: str,
         source_chunks: List[TextChunk]
     ) -> Dict:
-        answer = self.generate_answer(question, context)
-        
-        sources = []
-        for i, chunk in enumerate(source_chunks, 1):
-            source_info = {
-                "source_id": i,
-                "doc_id": chunk.doc_id,
-                "section": chunk.metadata.get("section", "unknown"),
-                "text_preview": chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text
-            }
-            sources.append(source_info)
-        
-        return {
-            "answer": answer,
-            "sources": sources,
+        raw = self.generate_answer(question, context)
+        parsed = self.parse_model_output(raw)
+
+        # Ensure keys exist
+        answer_text = parsed.get("answer", "").strip() if isinstance(parsed.get("answer", ""), str) else str(parsed.get("answer", ""))
+        parsed_sources = parsed.get("sources", []) if isinstance(parsed.get("sources", []), list) else []
+
+        # Augment parsed sources with local metadata when ids are numeric (indexing into source_chunks)
+        augmented_sources = []
+        for src in parsed_sources:
+            s = dict(src)
+            sid = s.get("id") or s.get("source_id")
+            try:
+                idx = int(sid) - 1
+            except Exception:
+                idx = None
+
+            if idx is not None and 0 <= idx < len(source_chunks):
+                chunk = source_chunks[idx]
+                s.setdefault("doc_id", chunk.doc_id)
+                s.setdefault("section", chunk.metadata.get("section", "unknown"))
+                s.setdefault("text_preview", chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text)
+
+            augmented_sources.append(s)
+
+        result = {
+            "answer": answer_text,
+            "sources": augmented_sources,
+            "abstain": bool(parsed.get("abstain", False)),
+            "abstain_reason": parsed.get("abstain_reason"),
             "question": question,
-            "num_sources": len(sources)
+            "raw": raw
         }
+
+        return result
     
     # Checks if model abstained from answering the question
     def check_abstention(self, answer: str) -> bool:
@@ -276,3 +325,15 @@ Your analysis:"""
 
 if __name__ == "__main__":
     generator = Generator()
+
+    # Quick local tests for the JSON parser
+    sample_responses = [
+        '{"answer": "The main contribution is X.", "sources": [{"id": 1, "score": 0.93, "excerpt": "..."}], "abstain": false}',
+        'Response:\n{"answer": "Not enough information.", "sources": [], "abstain": true, "abstain_reason": "missing methods"}',
+        'Plain text answer without JSON: The model cannot answer this question.'
+    ]
+
+    for r in sample_responses:
+        parsed = generator.parse_model_output(r)
+        print("---\nRaw:\n", r)
+        print("Parsed:\n", parsed)

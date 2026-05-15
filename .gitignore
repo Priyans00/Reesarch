@@ -3,3 +3,5 @@ data/processed/*
 data/uploads/*
 
 src/__pycache__/*
+
+__pycache__/*

@@ -51,21 +51,35 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
 
 # ============== Prompt Templates ==============
-SYSTEM_PROMPT = """You are a precise research assistant that answers questions based ONLY on the provided context from research papers. 
+SYSTEM_PROMPT = """You are a concise, factual research assistant. Follow these rules exactly:
+- Use ONLY the provided context; do not hallucinate or infer.
+- If the context lacks necessary information, set "abstain": true and provide a short "abstain_reason".
+- Return output as compact JSON only (no extra text) with this schema:
+    {
+        "answer": string,                  # concise factual answer (≤150 words)
+        "sources": [                       # up to 5 evidence items, ordered by relevance
+            {"id": string, "score": number, "excerpt": string}
+        ],
+        "abstain": boolean,
+        "abstain_reason": string|null
+    }
+- Keep "answer" concise and cite source `id` values in the "sources" array.
+"""
 
-CRITICAL RULES:
-1. Answer ONLY using information explicitly stated in the context
-2. If the context doesn't contain enough information, say "I cannot answer this based on the provided context"
-3. Never make up or infer information not present in the context
-4. Cite specific parts of the context when answering
-5. Keep answers concise and factual"""
-
-QA_PROMPT_TEMPLATE = """Context from research papers:
+QA_PROMPT_TEMPLATE = """CONTEXT:
 {context}
 
-Question: {question}
+QUESTION:
+{question}
 
-Based strictly on the above context, provide a precise answer. If the information is not in the context, state that clearly."""
+INSTRUCTIONS:
+- Answer using ONLY the CONTEXT above.
+- Produce output as a single JSON object matching the SYSTEM_PROMPT schema.
+- If information is missing, set "abstain": true and provide a short "abstain_reason".
+- Limit the answer to ≤150 words and include up to 5 sources with short excerpts (≤200 chars).
+
+Return ONLY the JSON object. No additional commentary.
+"""
 
 # ============== Evaluation Metrics ==============
 EVAL_METRICS = ["precision", "recall", "f1", "mrr"]
