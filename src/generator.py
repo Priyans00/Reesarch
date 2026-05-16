@@ -1,10 +1,10 @@
 # Answer generation module using Qwen language model
 
 from typing import List, Dict, Optional, Tuple, Any
+import ast
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import json
-import re
 
 from config import (
     GENERATOR_MODEL,
@@ -123,14 +123,17 @@ class Generator:
             obj_text = text[start:end+1]
 
         if obj_text:
-            # Normalize common issues: single quotes -> double quotes for JSON
             candidate = obj_text
-            candidate = candidate.replace("\"\'", '"')
-            candidate = re.sub(r"\'([^"]*?)\'", r'"\1"', candidate)
             try:
                 return json.loads(candidate)
             except Exception:
-                pass
+                try:
+                    # Accept Python-style dict output as a fallback, then normalize to JSON-like types.
+                    parsed = ast.literal_eval(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except Exception:
+                    pass
 
         # Fallback: return the raw string as the 'answer' field
         return {"answer": text, "sources": [], "abstain": False, "abstain_reason": None}
